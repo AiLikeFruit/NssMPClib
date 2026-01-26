@@ -2,10 +2,6 @@
 #  Copyright (c) 2024 XDU NSS lab,
 #  Licensed under the MIT license. See LICENSE in the project root for license information.
 import os
-
-import torch
-from pyasn1_modules.rfc5753 import x9_63_scheme
-
 from nssmpc.config import param_path, DEBUG_LEVEL, data_type, DEVICE, DTYPE
 from nssmpc.infra.mpc.aux_parameter.param_provider import BaseParamProvider
 from nssmpc.infra.mpc.aux_parameter.parameter import Parameter

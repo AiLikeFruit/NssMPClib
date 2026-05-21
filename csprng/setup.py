@@ -1,12 +1,64 @@
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
 
-import torch
-from setuptools import Command, find_packages, setup
-from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
+
+def _nvcc_release(cuda_home):
+    if not cuda_home:
+        return None
+    nvcc = os.path.join(cuda_home, "bin", "nvcc")
+    if not os.path.isfile(nvcc):
+        return None
+    try:
+        out = subprocess.check_output([nvcc, "--version"], stderr=subprocess.STDOUT).decode("utf-8", "ignore")
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    m = re.search(r"release (\d+\.\d+)", out)
+    return m.group(1) if m else None
+
+
+def _auto_set_cuda_home(torch_cuda):
+    """Align CUDA_HOME to torch.version.cuda.
+
+    Duplicated from NssMPClib/setup.py because pip installs this package in a
+    separate subprocess, so env vars set there don't reach us.
+    """
+    if not torch_cuda:
+        return
+    current = os.environ.get("CUDA_HOME") or "/usr/local/cuda"
+    if _nvcc_release(current) == torch_cuda:
+        return
+    candidates = sorted(glob.glob("/usr/local/cuda-*"), reverse=True)
+    for cand in candidates:
+        if _nvcc_release(cand) == torch_cuda:
+            os.environ["CUDA_HOME"] = cand
+            print(f"Notice: auto-set CUDA_HOME={cand} (matches torch.version.cuda={torch_cuda})")
+            return
+    major = torch_cuda.split(".")[0]
+    for cand in candidates:
+        rel = _nvcc_release(cand)
+        if rel and rel.split(".")[0] == major:
+            os.environ["CUDA_HOME"] = cand
+            print(
+                f"Warning: no exact CUDA {torch_cuda} toolkit found; using {cand} (release {rel})."
+            )
+            return
+    print(
+        f"Warning: torch was built against CUDA {torch_cuda} but no matching "
+        f"/usr/local/cuda-* was found (CUDA_HOME='{os.environ.get('CUDA_HOME')}').",
+        file=sys.stderr,
+    )
+
+
+import torch  # noqa: E402
+
+_auto_set_cuda_home(torch.version.cuda)
+
+from setuptools import Command, find_packages, setup  # noqa: E402
+from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension  # noqa: E402
 
 version = open("version.txt", "r").read().strip()
 sha = "Unknown"

@@ -326,31 +326,38 @@ def recommend(root: Path, torch_info: TorchInfo, nvccs: list[NvccInfo]) -> None:
 
     has_nvidia_smi, smi_output = detect_nvidia_smi()
     if has_nvidia_smi:
-        print("An NVIDIA driver appears to be present, but this PyTorch build is CPU-only.")
+        print("PyTorch is installed as a CPU-only build, though an NVIDIA driver is present.")
         if smi_output:
             print("Detected GPUs:")
             for line in smi_output.splitlines():
                 print(f"  {line}")
-        print("Install a CUDA-enabled PyTorch wheel first.")
+        print(
+            "setup.py and csprng/setup.py both auto-skip their CUDA extensions when "
+            "torch is CPU-only, so the standard install below works as-is for a CPU run."
+        )
+        print_command(
+            "pip install -e . --no-build-isolation",
+            "Run this command to install NssMPClib (CPU path):",
+        )
         preferred = preferred_nvcc(nvccs)
-        if preferred and preferred.release:
-            print(f"The newest detected local nvcc is CUDA {preferred.release} at {preferred.path}.")
-            print_command(
-                "pip install torch torchvision torchaudio "
-                f"--index-url {torch_index(preferred.release)}",
-                "Run this command to install a matching PyTorch build:",
-            )
-        else:
-            print_command(
-                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128",
-                "Run this command to install a CUDA PyTorch build:",
-            )
-        print("Then rerun: python3 scripts/installation_advice.py")
+        cuda_index = (
+            torch_index(preferred.release)
+            if preferred and preferred.release
+            else "https://download.pytorch.org/whl/cu128"
+        )
+        print()
+        print("If you would rather use the GPU, install a CUDA torch wheel first, then rerun this script:")
+        print_command(
+            f"pip install torch torchvision torchaudio --index-url {cuda_index}",
+            "Optional CUDA torch install:",
+        )
         return
 
-    print("No usable NVIDIA CUDA path was detected.")
-    print("Recommended standard install:")
-    print_command("NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1 pip install -e . --no-build-isolation")
+    print("CPU-only environment detected; setup.py will auto-skip the CUDA extensions.")
+    print_command(
+        "pip install -e . --no-build-isolation",
+        "Run this command to install NssMPClib (CPU path):",
+    )
 
 
 def main() -> int:

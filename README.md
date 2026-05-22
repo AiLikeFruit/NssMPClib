@@ -57,17 +57,24 @@ and rerun the script until it prints an NssMPClib install command.
 
 ### Step 3: Install NssMPClib
 
-Run the command the advice script printed. In the common case it is simply:
+Run the command the advice script printed. In both common cases it is simply:
 
 ```bash
 pip install -e . --no-build-isolation
 ```
 
-`setup.py` auto-detects `CUDA_HOME` (by scanning `/usr/local/cuda-*` for the
-nvcc release matching `torch.version.cuda`) and `TORCH_CUDA_ARCH_LIST` (from
-visible GPUs), so no env-var prefix is needed in the typical case. The advice
-script will tell you when it is (e.g. for a CPU-only or skip-CUDA build, it
-prints the `NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1` variant).
+- **CUDA torch + matching nvcc + GPU visible**: `setup.py` auto-detects
+  `CUDA_HOME` (by scanning `/usr/local/cuda-*` for the nvcc release matching
+  `torch.version.cuda`) and `TORCH_CUDA_ARCH_LIST` (from visible GPUs), then
+  builds the CUTLASS and CUDA `torchcsprng` extensions.
+- **CPU-only torch**: `setup.py` skips the CUTLASS extension (since
+  `torch.version.cuda` is unset) and `csprng/setup.py` skips its CUDA build
+  (since `torch.cuda.is_available()` is False), so the same command above works
+  as-is — no env vars needed.
+
+The `NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1` variant is only needed in
+edge cases (CUDA torch installed but nvcc missing / no GPU / broken toolchain);
+the advice script prints it explicitly when applicable.
 
 ### Step 4: Generate cryptographic parameters
 

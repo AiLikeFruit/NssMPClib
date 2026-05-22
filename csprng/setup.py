@@ -58,7 +58,11 @@ import torch  # noqa: E402
 _auto_set_cuda_home(torch.version.cuda)
 
 from setuptools import Command, find_packages, setup  # noqa: E402
+from torch.utils import cpp_extension  # noqa: E402
 from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension  # noqa: E402
+
+if os.environ.get("CUDA_HOME"):
+    cpp_extension.CUDA_HOME = os.environ["CUDA_HOME"]
 
 version = open("version.txt", "r").read().strip()
 sha = "Unknown"
@@ -106,7 +110,10 @@ def append_flags(flags, flags_to_append):
 
 
 def get_extensions():
-    build_cuda = torch.cuda.is_available() or os.getenv("FORCE_CUDA", "0") == "1"
+    skip_cuda = os.getenv("NSSMPC_SKIP_CSPRNG_CUDA", "").lower() in ("1", "true", "yes")
+    build_cuda = not skip_cuda and (torch.cuda.is_available() or os.getenv("FORCE_CUDA", "0") == "1")
+    if skip_cuda:
+        print("Notice: NSSMPC_SKIP_CSPRNG_CUDA is set; building torchcsprng without CUDA support.")
 
     module_name = "torchcsprng"
 

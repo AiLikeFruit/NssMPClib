@@ -103,17 +103,12 @@ def _print_toolkit_install_guide(torch_cuda):
         "",
         f"Pick one of the following to proceed:",
         "",
-        f"  [A] Install the matching CUDA {major_minor} toolkit via conda (recommended; no sudo):",
-        f"        conda install -c nvidia/label/cuda-{major_minor}.0 "
-        f"cuda-nvcc cuda-cudart-dev cuda-libraries-dev",
-        f"      then re-run `pip install -e . --no-build-isolation`.",
-        "",
     ]
 
     codename = _detect_ubuntu_codename()
     if codename:
         lines += [
-            f"  [B] Install via apt on {codename}:",
+            f"  [A] Install CUDA Toolkit {major_minor} via apt on {codename}:",
             f"        wget https://developer.download.nvidia.com/compute/cuda/repos/"
             f"{codename}/x86_64/cuda-keyring_1.1-1_all.deb",
             f"        sudo dpkg -i cuda-keyring_1.1-1_all.deb",
@@ -123,17 +118,17 @@ def _print_toolkit_install_guide(torch_cuda):
         ]
     else:
         lines += [
-            f"  [B] Install via your OS package manager — see "
+            f"  [A] Install CUDA Toolkit {major_minor} via your OS package manager — see "
             f"https://developer.nvidia.com/cuda-{major_minor}-0-download-archive",
             "",
         ]
 
     lines += [
-        f"  [C] Reinstall torch to match the toolkit already on this host, e.g.:",
+        f"  [B] Reinstall torch to match the toolkit already on this host, e.g.:",
         f"        pip install torch --index-url https://download.pytorch.org/whl/{cu_short}",
         "",
-        f"  [D] Skip the CUDA extension (CPU/Triton fallback at runtime):",
-        f"        NSSMPC_SKIP_CUTLASS=1 pip install -e . --no-build-isolation",
+        f"  [C] Use the standard install without local CUDA extension compilation:",
+        f"        NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1 pip install -e . --no-build-isolation",
     ]
     print("\n".join(lines), file=sys.stderr)
 
@@ -168,7 +163,6 @@ _ensure_submodules()
 
 try:
     import torch
-    from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 except ImportError:
     sys.exit(
         "Error: torch must be installed before building NssMPClib.\n"
@@ -179,6 +173,12 @@ except ImportError:
 
 _auto_set_cuda_home(torch.version.cuda)
 _set_torch_cuda_arch_list(torch)
+
+from torch.utils import cpp_extension  # noqa: E402
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension  # noqa: E402
+
+if os.environ.get("CUDA_HOME"):
+    cpp_extension.CUDA_HOME = os.environ["CUDA_HOME"]
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 

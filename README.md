@@ -31,81 +31,109 @@ Secret Sharing.
 
 ## Installation
 
-### Step 0: Match torch's CUDA version to your toolkit
+NssMPClib defaults to recommending a CUDA-optimized install when the machine can
+support it. Because PyTorch CUDA extensions require `nvcc` to match
+`torch.version.cuda`, the safest first step is to run the read-only installation
+advice script.
 
-Because NssMPClib compiles a CUDA extension at install time, PyTorch's
-`cpp_extension` will refuse to build if `torch.version.cuda` does not match the
-`nvcc` reachable from `CUDA_HOME` (or `/usr/local/cuda`). On hosts that ship
-multiple CUDA toolkits side by side, `setup.py` tries to auto-pick the right
-`/usr/local/cuda-X.Y` for you — but the right toolkit still has to exist on
-the machine.
+### Step 1: Clone with submodules
 
-```bash
-# What CUDA does your torch want?
-python -c "import torch; print(torch.version.cuda)"
-
-# What does your system actually have?
-ls -d /usr/local/cuda-* 2>/dev/null
-```
-
-Suppose `torch.version.cuda` prints `12.8`. Pick one of:
-
-**A. Install the matching toolkit via conda (no sudo, recommended)**
-```bash
-conda install -c nvidia/label/cuda-12.8.0 \
-    cuda-nvcc cuda-cudart-dev cuda-libraries-dev
-```
-
-**B. Install the matching toolkit via apt (Ubuntu)**
-```bash
-# Replace ubuntu2404 with your release (e.g. ubuntu2204):
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt-get update
-sudo apt-get install -y cuda-toolkit-12-8
-export CUDA_HOME=/usr/local/cuda-12.8
-```
-
-**C. Reinstall torch to match a toolkit you already have**
-```bash
-# Check your local toolkit version first:
-# nvcc --version  -> Suppose it says 11.8
-pip install torch --index-url https://download.pytorch.org/whl/cu118
-```
-
-**D. Skip the CUDA extension entirely** (runtime falls back to the pure-PyTorch matrix multiplication track under `nssmpc/infra/utils/cuda.py`, which is still GPU-accelerated but lacks Cutlass optimization)
-```bash
-export NSSMPC_SKIP_CUTLASS=1
-```
-
-If you skip Step 0, `setup.py` will still try to auto-detect and align
-`CUDA_HOME`, and on failure it prints the same four options before exiting.
-
-### Step 1: Clone (with submodules) and install
 ```bash
 git clone --recursive https://github.com/XidianNSS/NssMPClib.git
 cd NssMPClib
-# If you forgot --recursive:
-#   git submodule update --init --recursive
-
-pip install -e . --no-build-isolation
 ```
 
-`--no-build-isolation` is required because the build needs the already-installed
-torch (otherwise pip would set up a clean env without it). The `setup.py`
-auto-detects `TORCH_CUDA_ARCH_LIST` from the visible GPUs and aligns `CUDA_HOME`
-with `torch.version.cuda` when possible; both can be overridden via env vars.
+If you cloned without `--recursive`, initialize the submodules before installing:
 
-To install without the CUDA extension (CPU-only, or when no matching toolkit is
-available):
 ```bash
-NSSMPC_SKIP_CUTLASS=1 pip install -e . --no-build-isolation
+git submodule update --init --recursive
 ```
 
-### Step 2: Generate Cryptographic Parameters
-Generate essential precomputed parameters for MPC operations:
+### Step 2: Ask for installation advice
+
 ```bash
-python scripts/offline_parameter_generation.py
+python3 scripts/installation_advice.py
+```
+
+The script does not install anything. It prints the detected Python, PyTorch,
+CUDA, `nvcc`, GPU architecture, and submodule status. Follow its output in
+order:
+
+1. If it says PyTorch, CUDA Toolkit, `nvcc`, or submodules are missing, install
+   or fix those first.
+2. Rerun `python3 scripts/installation_advice.py`.
+3. When the output says `Run this command to install NssMPClib ...`, run that
+   exact `pip install ...` command.
+
+### Step 3: Install or fix prerequisites
+
+Skip this step if the advice script already prints an NssMPClib install command.
+
+Typical outcomes:
+
+**A. CUDA PyTorch and matching nvcc are available**
+
+No prerequisite fix is needed. Continue to Step 4 and run the install command
+printed by the advice script.
+
+**B. PyTorch is installed, but matching nvcc is missing**
+
+If `torch.version.cuda` is `12.8`, install CUDA Toolkit / `nvcc` 12.8 with the
+package manager you normally use for CUDA on that machine. On Ubuntu, this is
+typically the NVIDIA CUDA apt repository and `cuda-toolkit-12-8`.
+
+Then rerun:
+
+```bash
+python3 scripts/installation_advice.py
+```
+
+You can also choose to reinstall PyTorch to match an existing local toolkit; the
+advice script prints the matching `https://download.pytorch.org/whl/cu*` command
+when that applies.
+
+**C. PyTorch is not installed yet**
+
+Install the PyTorch build recommended by the script, then rerun the advice script.
+For example, on a CUDA 12.8 machine:
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+python3 scripts/installation_advice.py
+```
+
+### Step 4: Install NssMPClib
+
+Run the NssMPClib install command printed by the advice script.
+
+For CUDA-optimized installs, it will look like:
+
+```bash
+CUDA_HOME=/usr/local/cuda-12.8 TORCH_CUDA_ARCH_LIST='12.0' pip install -e . --no-build-isolation
+```
+
+This builds the bundled CUDA extensions, including the CUTLASS matrix
+multiplication path and CUDA-enabled `torchcsprng`.
+
+For standard compatibility installs, it will look like:
+
+```bash
+NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1 pip install -e . --no-build-isolation
+```
+
+This skips local CUDA extension compilation and uses the PyTorch fallback paths.
+
+If an install attempt fails because the environment changed or a toolchain was
+fixed, rerun:
+
+```bash
+python3 scripts/installation_advice.py
+```
+
+### Step 5: Generate Cryptographic Parameters
+No matter which pathway you chose, generate the precomputed parameters required for MPC operations:
+```bash
+python3 scripts/offline_parameter_generation.py
 ```
 
 **Note**: Parameters are saved to `~/NssMPClib/data/` (32-bit in `data/32/`, 64-bit in `data/64/`).
@@ -256,7 +284,7 @@ Detailed tutorials are available in the `tutorials/` directory:
 
 1. **"Parameters not found" Error**:
    ```bash
-   python scripts/offline_parameter_generation.py
+   python3 scripts/offline_parameter_generation.py
    ```
 
 2. **Port Already in Use**:
@@ -268,10 +296,15 @@ Detailed tutorials are available in the `tutorials/` directory:
 4. **`RuntimeError: The detected CUDA version (X.Y) mismatches ...` at install**:
    Your system `nvcc` (`/usr/local/cuda/bin/nvcc`) does not match the CUDA
    version torch was built against. Either install the matching CUDA toolkit
-   (then re-run `pip install -e . --no-build-isolation`), set `CUDA_HOME` to a
-   directory whose `bin/nvcc` matches, reinstall torch from the matching
-   `https://download.pytorch.org/whl/cu*` index, or skip the CUDA extension
-   with `NSSMPC_SKIP_CUTLASS=1`.
+   or set `CUDA_HOME` to a directory whose `bin/nvcc` matches. Then rerun:
+   ```bash
+   python3 scripts/installation_advice.py
+   ```
+   You can also reinstall torch from the matching
+   `https://download.pytorch.org/whl/cu*` index, or use the standard install:
+   ```bash
+   NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1 pip install -e . --no-build-isolation
+   ```
 
 5. **`fatal error: cutlass/...: No such file or directory` during build**:
    Submodules weren't pulled. Run

@@ -24,10 +24,17 @@ Secret Sharing.
 
 ## System Requirements
 
-- **OS**: Linux (required for proper compilation)
+- **OS**: Linux is the primary supported platform; Windows works for CPU-only
+  installs (and CUDA installs with matching toolchain) but is less tested.
 - **Python**: 3.10 or higher (recommended: 3.12)
 - **PyTorch**: >=2.3.0 (recommended: 2.7.1)
-- **Additional**: C++ compiler (gcc/g++), CUDA toolkit (for GPU support)
+- **C/C++ compiler**: required because `torchcsprng` always builds a native
+  extension. On Linux: `gcc`/`g++` (e.g. `sudo apt-get install build-essential`).
+  On Windows: install
+  [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  with the "Desktop development with C++" workload.
+- **CUDA toolkit**: optional, only for GPU acceleration. Match the toolkit version
+  to `torch.version.cuda`.
 
 ## Installation
 
@@ -62,6 +69,11 @@ Run the command the advice script printed. In both common cases it is simply:
 ```bash
 pip install -e . --no-build-isolation
 ```
+
+Because `--no-build-isolation` reuses your environment instead of bootstrapping
+a clean one, `setuptools` and `wheel` must already be installed there. The
+advice script flags it explicitly if either is missing; install them with
+`pip install --upgrade setuptools wheel` and rerun.
 
 - **CUDA torch + matching nvcc + GPU visible**: `setup.py` auto-detects
   `CUDA_HOME` (by scanning `/usr/local/cuda-*` for the nvcc release matching

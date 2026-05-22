@@ -22,6 +22,15 @@ from typing import Iterable
 
 YES_VALUES = {"1", "true", "yes", "on"}
 
+# CUDA versions for which PyTorch publishes a cu* wheel index.
+# Keep sorted ascending; recommendations always pick the highest entry that is
+# <= the driver-supported CUDA or local nvcc release.
+PYTORCH_CUDA_INDEXES = ("11.8", "12.1", "12.4", "12.6", "12.8")
+
+# Minimum CUDA compute capability supported by modern PyTorch wheels (sm_50).
+# Cards below this (Kepler sm_3.x and earlier) cannot run cu* wheels.
+MIN_PYTORCH_COMPUTE_CAP = (5, 0)
+
 
 @dataclass(frozen=True)
 class NvccInfo:
@@ -145,6 +154,80 @@ def detect_nvidia_smi() -> tuple[bool, str | None]:
     return True, out
 
 
+def _parse_version(value: str | None) -> tuple[int, int] | None:
+    if not value:
+        return None
+    m = re.match(r"^\s*(\d+)\.(\d+)", value)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def nvidia_smi_driver_cuda() -> str | None:
+    """Max CUDA version the NVIDIA driver supports, parsed from `nvidia-smi` header."""
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return None
+    code, out = run_cmd([smi])
+    if code != 0:
+        return None
+    m = re.search(r"CUDA Version:\s*([\d.]+)", out)
+    return m.group(1) if m else None
+
+
+def nvidia_smi_compute_caps() -> list[str]:
+    """Per-GPU compute capability strings from `nvidia-smi --query-gpu=compute_cap`."""
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return []
+    code, out = run_cmd([smi, "--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
+    if code != 0:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def pytorch_cu_index_for(cuda_version: str | None) -> str | None:
+    """Highest entry in PYTORCH_CUDA_INDEXES that is <= cuda_version."""
+    target = _parse_version(cuda_version)
+    if not target:
+        return None
+    best: tuple[int, int] | None = None
+    best_str: str | None = None
+    for v in PYTORCH_CUDA_INDEXES:
+        parsed = _parse_version(v)
+        if parsed and parsed <= target and (best is None or parsed > best):
+            best = parsed
+            best_str = v
+    return best_str
+
+
+def recommended_cuda_torch_index(
+    nvccs: list[NvccInfo], driver_cuda: str | None
+) -> tuple[str, str] | None:
+    """Pick the best (cuda_version, wheel_index_url) for installing PyTorch.
+
+    Prefers a wheel matching a local nvcc release (so the user can also build
+    NssMPClib's CUDA extensions with that nvcc), then falls back to the
+    driver-supported max CUDA. Returns None when nothing in
+    PYTORCH_CUDA_INDEXES fits.
+    """
+    preferred = preferred_nvcc(nvccs)
+    if preferred and preferred.release:
+        picked = pytorch_cu_index_for(preferred.release)
+        if picked:
+            return picked, torch_index(picked)
+    picked = pytorch_cu_index_for(driver_cuda)
+    if picked:
+        return picked, torch_index(picked)
+    return None
+
+
+def all_compute_caps_too_old(caps: Iterable[str]) -> bool:
+    """True iff at least one cap was reported and the max is below MIN_PYTORCH_COMPUTE_CAP."""
+    parsed = [p for p in (_parse_version(c) for c in caps) if p]
+    if not parsed:
+        return False
+    return max(parsed) < MIN_PYTORCH_COMPUTE_CAP
+
+
 def ubuntu_codename() -> str | None:
     os_release = Path("/etc/os-release")
     if not os_release.exists():
@@ -209,6 +292,56 @@ def submodule_status(root: Path) -> list[str]:
     return missing
 
 
+def detect_missing_build_deps() -> list[str]:
+    """Return missing names from ('setuptools', 'wheel') that --no-build-isolation needs."""
+    missing = []
+    for name in ("setuptools", "wheel"):
+        try:
+            __import__(name)
+        except ImportError:
+            missing.append(name)
+    return missing
+
+
+def detect_cpp_compiler() -> tuple[bool, str | None]:
+    """Best-effort detection of a C/C++ compiler that PyTorch can use for extension builds.
+
+    Returns (has_compiler, advice_message). torchcsprng always builds a native
+    extension, so this is required regardless of CUDA path.
+    """
+    if platform.system() == "Windows":
+        if shutil.which("cl"):
+            return True, None
+        # Look for an actual cl.exe inside common VS / Build Tools layouts —
+        # directory existence alone isn't enough (installer leaves empty stubs).
+        cl_patterns = [
+            r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Host*\*\cl.exe",
+            r"C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Host*\*\cl.exe",
+            r"C:\BuildTools\VC\Tools\MSVC\*\bin\Host*\*\cl.exe",
+        ]
+        if any(glob.glob(p) for p in cl_patterns):
+            return False, (
+                "Microsoft Visual C++ appears to be installed but 'cl' is not on PATH. "
+                "Open the 'x64 Native Tools Command Prompt for VS' (or run vcvarsall.bat) "
+                "before retrying, so that the compiler is reachable."
+            )
+        return False, (
+            "Building torchcsprng's C++ extension requires Microsoft Visual C++ 14.0 or newer. "
+            "Install 'Build Tools for Visual Studio' (free) from "
+            "https://visualstudio.microsoft.com/visual-cpp-build-tools/ "
+            "with the 'Desktop development with C++' workload, then open the "
+            "'x64 Native Tools Command Prompt for VS' (so 'cl' is on PATH) before retrying."
+        )
+    # Unix-like
+    for name in ("c++", "g++", "clang++", "cc", "gcc", "clang"):
+        if shutil.which(name):
+            return True, None
+    return False, (
+        "Building C/C++ extensions requires a system C++ compiler (gcc/g++ or clang). "
+        "On Ubuntu/Debian: sudo apt-get install build-essential."
+    )
+
+
 def print_section(title: str) -> None:
     print(f"\n{title}")
     print("-" * len(title))
@@ -222,6 +355,7 @@ def print_command(command: str, intro: str = "Run this command:") -> None:
 
 def recommend(root: Path, torch_info: TorchInfo, nvccs: list[NvccInfo]) -> None:
     missing_submodules = submodule_status(root)
+    missing_build_deps = detect_missing_build_deps()
     skip_cutlass = env_enabled("NSSMPC_SKIP_CUTLASS")
     skip_csprng_cuda = env_enabled("NSSMPC_SKIP_CSPRNG_CUDA")
 
@@ -230,6 +364,30 @@ def recommend(root: Path, torch_info: TorchInfo, nvccs: list[NvccInfo]) -> None:
     if missing_submodules:
         print("Submodules are missing, so installation should start here:")
         print_command("git submodule update --init --recursive")
+        print("Then rerun: python3 scripts/installation_advice.py")
+        return
+
+    if missing_build_deps:
+        print(
+            "Build dependencies for --no-build-isolation are missing: "
+            + ", ".join(missing_build_deps)
+            + ". pip needs them to run the editable build and produce a wheel."
+        )
+        print_command(
+            "pip install --upgrade " + " ".join(missing_build_deps),
+            "Run this command to install them:",
+        )
+        print("Then rerun: python3 scripts/installation_advice.py")
+        return
+
+    has_compiler, compiler_advice = detect_cpp_compiler()
+    if not has_compiler:
+        print(
+            "No C/C++ compiler was detected, but torchcsprng's native extension must "
+            "be compiled from source."
+        )
+        if compiler_advice:
+            print(compiler_advice)
         print("Then rerun: python3 scripts/installation_advice.py")
         return
 
@@ -245,22 +403,68 @@ def recommend(root: Path, torch_info: TorchInfo, nvccs: list[NvccInfo]) -> None:
 
     if not torch_info.installed:
         print("PyTorch is not installed, so CUDA capability cannot be evaluated yet.")
-        print("Install a PyTorch build that matches your GPU/driver first.")
-        preferred = preferred_nvcc(nvccs)
-        if preferred and preferred.release:
-            print(f"The newest detected local nvcc is CUDA {preferred.release} at {preferred.path}.")
+        has_smi, _ = detect_nvidia_smi()
+        driver_cuda = nvidia_smi_driver_cuda()
+        compute_caps = nvidia_smi_compute_caps()
+
+        if not has_smi and not nvccs:
+            print("No CUDA toolchain or NVIDIA driver detected; this looks like a CPU-only host.")
             print_command(
-                "pip install torch torchvision torchaudio "
-                f"--index-url {torch_index(preferred.release)}",
-                "Run this command to install a matching PyTorch build:",
+                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu",
+                "Run this command to install CPU PyTorch:",
+            )
+            print("Then rerun: python3 scripts/installation_advice.py")
+            return
+
+        if all_compute_caps_too_old(compute_caps):
+            cap_str = ", ".join(compute_caps) if compute_caps else "<unknown>"
+            min_cap = f"sm_{MIN_PYTORCH_COMPUTE_CAP[0]}{MIN_PYTORCH_COMPUTE_CAP[1]}"
+            print(
+                f"NVIDIA driver detected, but GPU compute capability ({cap_str}) is below "
+                f"{min_cap}, which recent PyTorch CUDA wheels do not support."
+            )
+            print_command(
+                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu",
+                "Run this command to install CPU PyTorch instead:",
+            )
+            print("Then rerun: python3 scripts/installation_advice.py")
+            return
+
+        picked = recommended_cuda_torch_index(nvccs, driver_cuda)
+        if picked:
+            cu_version, cu_url = picked
+            label = f"cu{cu_version.replace('.', '')}"
+            context_parts = []
+            preferred = preferred_nvcc(nvccs)
+            if preferred and preferred.release:
+                context_parts.append(f"local nvcc {preferred.release}")
+            if driver_cuda:
+                context_parts.append(f"driver max CUDA {driver_cuda}")
+            context = "; ".join(context_parts) or "GPU present"
+            print(f"Choosing PyTorch {label} ({context}).")
+            print_command(
+                f"pip install torch torchvision torchaudio --index-url {cu_url}",
+                f"Run this command to install a CUDA PyTorch build ({label}):",
+            )
+            print("Then rerun: python3 scripts/installation_advice.py")
+            return
+
+        if driver_cuda:
+            print(
+                f"NVIDIA driver detected but max supported CUDA ({driver_cuda}) is below the "
+                f"lowest PyTorch CUDA wheel (cu{PYTORCH_CUDA_INDEXES[0].replace('.', '')}). "
+                "Update the NVIDIA driver, or install CPU PyTorch:"
             )
         else:
-            print_command(
-                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128",
-                "Run this command to install a CUDA PyTorch build:",
+            print(
+                "NVIDIA driver detected but its CUDA support could not be determined. "
+                "Falling back to CPU PyTorch:"
             )
+        print_command(
+            "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu",
+            "Run this command to install CPU PyTorch:",
+        )
         print("Then rerun: python3 scripts/installation_advice.py")
-        print("If your machine is CPU-only, use the standard install after installing CPU PyTorch.")
         return
 
     if torch_info.cuda_version and torch_info.cuda_available:
@@ -339,18 +543,22 @@ def recommend(root: Path, torch_info: TorchInfo, nvccs: list[NvccInfo]) -> None:
             "pip install -e . --no-build-isolation",
             "Run this command to install NssMPClib (CPU path):",
         )
-        preferred = preferred_nvcc(nvccs)
-        cuda_index = (
-            torch_index(preferred.release)
-            if preferred and preferred.release
-            else "https://download.pytorch.org/whl/cu128"
-        )
-        print()
-        print("If you would rather use the GPU, install a CUDA torch wheel first, then rerun this script:")
-        print_command(
-            f"pip install torch torchvision torchaudio --index-url {cuda_index}",
-            "Optional CUDA torch install:",
-        )
+        compute_caps = nvidia_smi_compute_caps()
+        if not all_compute_caps_too_old(compute_caps):
+            driver_cuda = nvidia_smi_driver_cuda()
+            picked = recommended_cuda_torch_index(nvccs, driver_cuda)
+            if picked:
+                cu_version, cu_url = picked
+                label = f"cu{cu_version.replace('.', '')}"
+                print()
+                print(
+                    f"If you would rather use the GPU, install CUDA torch ({label}) first, "
+                    "then rerun this script:"
+                )
+                print_command(
+                    f"pip install torch torchvision torchaudio --index-url {cu_url}",
+                    f"Optional CUDA torch install ({label}):",
+                )
         return
 
     print("CPU-only environment detected; setup.py will auto-skip the CUDA extensions.")
@@ -401,6 +609,12 @@ def main() -> int:
         if smi_output:
             for line in smi_output.splitlines():
                 print(f"  {line}")
+        driver_cuda = nvidia_smi_driver_cuda()
+        if driver_cuda:
+            print(f"driver-supported CUDA (max): {driver_cuda}")
+        caps = nvidia_smi_compute_caps()
+        if caps:
+            print("compute capability: " + ", ".join(caps))
     else:
         print("nvidia-smi: not found")
 
@@ -411,6 +625,17 @@ def main() -> int:
     else:
         print("cutlass: ok")
         print("csprng: ok")
+
+    print_section("Build dependencies")
+    for name in ("setuptools", "wheel"):
+        try:
+            mod = __import__(name)
+            version = getattr(mod, "__version__", "unknown")
+            print(f"{name}: {version}")
+        except ImportError:
+            print(f"{name}: missing")
+    has_compiler, _ = detect_cpp_compiler()
+    print(f"C/C++ compiler: {'found' if has_compiler else 'not found'}")
 
     recommend(root, torch_info, nvccs)
 

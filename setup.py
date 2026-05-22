@@ -159,7 +159,63 @@ def _set_torch_cuda_arch_list(torch):
         print(f"Warning: CUDA arch auto-detection failed ({e}); defaulted to {fallback}")
 
 
+def _ensure_cpp_compiler():
+    """torchcsprng always builds a native extension, so a C/C++ compiler is required."""
+    import glob
+    import platform
+    import shutil
+
+    if platform.system() == "Windows":
+        if shutil.which("cl"):
+            return
+        # Look for an actual cl.exe inside common VS / Build Tools layouts —
+        # directory existence alone isn't enough (installer leaves empty stubs).
+        cl_patterns = [
+            r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Host*\*\cl.exe",
+            r"C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Host*\*\cl.exe",
+            r"C:\BuildTools\VC\Tools\MSVC\*\bin\Host*\*\cl.exe",
+        ]
+        if any(glob.glob(p) for p in cl_patterns):
+            sys.exit(
+                "Error: Microsoft Visual C++ appears to be installed but 'cl' is not on PATH.\n"
+                "Open the 'x64 Native Tools Command Prompt for VS' (or run vcvarsall.bat) "
+                "so that the compiler is reachable, then re-run "
+                "`pip install -e . --no-build-isolation`."
+            )
+        sys.exit(
+            "Error: no C/C++ compiler was found, but torchcsprng's native extension "
+            "must be compiled from source.\n"
+            "Install 'Build Tools for Visual Studio' (free) from\n"
+            "    https://visualstudio.microsoft.com/visual-cpp-build-tools/\n"
+            "with the 'Desktop development with C++' workload. Then open the "
+            "'x64 Native Tools Command Prompt for VS' (so 'cl' is on PATH) and "
+            "re-run `pip install -e . --no-build-isolation`."
+        )
+
+    for name in ("c++", "g++", "clang++", "cc", "gcc", "clang"):
+        if shutil.which(name):
+            return
+    sys.exit(
+        "Error: no C/C++ compiler was found, but torchcsprng's native extension "
+        "must be compiled from source.\n"
+        "On Ubuntu/Debian: sudo apt-get install build-essential\n"
+        "Then re-run `pip install -e . --no-build-isolation`."
+    )
+
+
 _ensure_submodules()
+_ensure_cpp_compiler()
+
+try:
+    import wheel  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'wheel' package is required to build NssMPClib with "
+        "--no-build-isolation, but it is not installed in this environment.\n"
+        "Install it first:\n"
+        "    pip install --upgrade setuptools wheel\n"
+        "Then re-run `pip install -e . --no-build-isolation`."
+    )
 
 try:
     import torch

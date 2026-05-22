@@ -31,10 +31,10 @@ Secret Sharing.
 
 ## Installation
 
-NssMPClib defaults to recommending a CUDA-optimized install when the machine can
-support it. Because PyTorch CUDA extensions require `nvcc` to match
-`torch.version.cuda`, the safest first step is to run the read-only installation
-advice script.
+NssMPClib bundles CUDA extensions and CUTLASS submodules. The included advice
+script inspects your environment (Python, PyTorch, CUDA, nvcc, GPU, submodules)
+and prints the exact install command to run. It is read-only and never installs
+anything itself.
 
 ### Step 1: Clone with submodules
 
@@ -43,95 +43,34 @@ git clone --recursive https://github.com/XidianNSS/NssMPClib.git
 cd NssMPClib
 ```
 
-If you cloned without `--recursive`, initialize the submodules before installing:
+If you cloned without `--recursive`, run `git submodule update --init --recursive`.
 
-```bash
-git submodule update --init --recursive
-```
-
-### Step 2: Ask for installation advice
+### Step 2: Check your environment
 
 ```bash
 python3 scripts/installation_advice.py
 ```
 
-The script does not install anything. It prints the detected Python, PyTorch,
-CUDA, `nvcc`, GPU architecture, and submodule status. Follow its output in
-order:
+If prerequisites (PyTorch, matching CUDA Toolkit / nvcc, submodules) are
+missing, the script prints the commands to fix them. Apply the suggested fix
+and rerun the script until it prints an NssMPClib install command.
 
-1. If it says PyTorch, CUDA Toolkit, `nvcc`, or submodules are missing, install
-   or fix those first.
-2. Rerun `python3 scripts/installation_advice.py`.
-3. When the output says `Run this command to install NssMPClib ...`, run that
-   exact `pip install ...` command.
+### Step 3: Install NssMPClib
 
-### Step 3: Install or fix prerequisites
-
-Skip this step if the advice script already prints an NssMPClib install command.
-
-Typical outcomes:
-
-**A. CUDA PyTorch and matching nvcc are available**
-
-No prerequisite fix is needed. Continue to Step 4 and run the install command
-printed by the advice script.
-
-**B. PyTorch is installed, but matching nvcc is missing**
-
-If `torch.version.cuda` is `12.8`, install CUDA Toolkit / `nvcc` 12.8 with the
-package manager you normally use for CUDA on that machine. On Ubuntu, this is
-typically the NVIDIA CUDA apt repository and `cuda-toolkit-12-8`.
-
-Then rerun:
+Run the command the advice script printed. In the common case it is simply:
 
 ```bash
-python3 scripts/installation_advice.py
+pip install -e . --no-build-isolation
 ```
 
-You can also choose to reinstall PyTorch to match an existing local toolkit; the
-advice script prints the matching `https://download.pytorch.org/whl/cu*` command
-when that applies.
+`setup.py` auto-detects `CUDA_HOME` (by scanning `/usr/local/cuda-*` for the
+nvcc release matching `torch.version.cuda`) and `TORCH_CUDA_ARCH_LIST` (from
+visible GPUs), so no env-var prefix is needed in the typical case. The advice
+script will tell you when it is (e.g. for a CPU-only or skip-CUDA build, it
+prints the `NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1` variant).
 
-**C. PyTorch is not installed yet**
+### Step 4: Generate cryptographic parameters
 
-Install the PyTorch build recommended by the script, then rerun the advice script.
-For example, on a CUDA 12.8 machine:
-
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-python3 scripts/installation_advice.py
-```
-
-### Step 4: Install NssMPClib
-
-Run the NssMPClib install command printed by the advice script.
-
-For CUDA-optimized installs, it will look like:
-
-```bash
-CUDA_HOME=/usr/local/cuda-12.8 TORCH_CUDA_ARCH_LIST='12.0' pip install -e . --no-build-isolation
-```
-
-This builds the bundled CUDA extensions, including the CUTLASS matrix
-multiplication path and CUDA-enabled `torchcsprng`.
-
-For standard compatibility installs, it will look like:
-
-```bash
-NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1 pip install -e . --no-build-isolation
-```
-
-This skips local CUDA extension compilation and uses the PyTorch fallback paths.
-
-If an install attempt fails because the environment changed or a toolchain was
-fixed, rerun:
-
-```bash
-python3 scripts/installation_advice.py
-```
-
-### Step 5: Generate Cryptographic Parameters
-No matter which pathway you chose, generate the precomputed parameters required for MPC operations:
 ```bash
 python3 scripts/offline_parameter_generation.py
 ```
@@ -293,22 +232,15 @@ Detailed tutorials are available in the `tutorials/` directory:
 3. **CUDA Errors**:
    Set `DEVICE: "cpu"` in config or check CUDA installation.
 
-4. **`RuntimeError: The detected CUDA version (X.Y) mismatches ...` at install**:
-   Your system `nvcc` (`/usr/local/cuda/bin/nvcc`) does not match the CUDA
-   version torch was built against. Either install the matching CUDA toolkit
-   or set `CUDA_HOME` to a directory whose `bin/nvcc` matches. Then rerun:
+4. **Install-time CUDA / submodule errors** (e.g. `RuntimeError: The detected
+   CUDA version (X.Y) mismatches ...`, or `fatal error: cutlass/...: No such
+   file or directory`):
+   Rerun the advice script — it will tell you whether to install a matching
+   CUDA toolkit, reinstall torch, pull submodules, or fall back to the skip-CUDA
+   install:
    ```bash
    python3 scripts/installation_advice.py
    ```
-   You can also reinstall torch from the matching
-   `https://download.pytorch.org/whl/cu*` index, or use the standard install:
-   ```bash
-   NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1 pip install -e . --no-build-isolation
-   ```
-
-5. **`fatal error: cutlass/...: No such file or directory` during build**:
-   Submodules weren't pulled. Run
-   `git submodule update --init --recursive` and reinstall.
 
 ## Contributing
 

@@ -266,25 +266,12 @@ def recommend(root: Path, torch_info: TorchInfo, nvccs: list[NvccInfo]) -> None:
     if torch_info.cuda_version and torch_info.cuda_available:
         exact = matching_nvcc(torch_info.cuda_version, nvccs)
         if exact:
-            cuda_home = str(Path(exact.path).parents[1])
-            arch_list = []
-            for _, _, cap in torch_info.devices:
-                if cap not in arch_list:
-                    arch_list.append(cap)
-            archs = " ".join(arch_list)
             print("CUDA PyTorch and a matching nvcc were detected.")
-            print("Recommended CUDA-optimized install:")
-            if archs:
-                print_command(
-                    f"CUDA_HOME={cuda_home} TORCH_CUDA_ARCH_LIST='{archs}' "
-                    "pip install -e . --no-build-isolation",
-                    "Run this command to install NssMPClib with CUDA extensions:",
-                )
-            else:
-                print_command(
-                    f"CUDA_HOME={cuda_home} pip install -e . --no-build-isolation",
-                    "Run this command to install NssMPClib with CUDA extensions:",
-                )
+            print("setup.py will auto-detect CUDA_HOME and TORCH_CUDA_ARCH_LIST.")
+            print_command(
+                "pip install -e . --no-build-isolation",
+                "Run this command to install NssMPClib with CUDA extensions:",
+            )
             return
 
         major_match = major_matching_nvcc(torch_info.cuda_version, nvccs)

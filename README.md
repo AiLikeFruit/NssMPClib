@@ -27,7 +27,7 @@ Secret Sharing.
 - **OS**: Linux is the primary supported platform; Windows works for CPU-only
   installs (and CUDA installs with matching toolchain) but is less tested.
 - **Python**: 3.10 or higher (recommended: 3.12)
-- **PyTorch**: >=2.3.0 (recommended: 2.7.1)
+- **PyTorch**: >=2.5.0 (recommended: 2.7.1 or newer compatible release)
 - **C/C++ compiler**: required because `torchcsprng` always builds a native
   extension. On Linux: `gcc`/`g++` (e.g. `sudo apt-get install build-essential`).
   On Windows: install
@@ -40,8 +40,9 @@ Secret Sharing.
 
 NssMPClib bundles CUDA extensions and CUTLASS submodules. The included advice
 script inspects your environment (Python, PyTorch, CUDA, nvcc, GPU, submodules)
-and prints the exact install command to run. It is read-only and never installs
-anything itself.
+and reports whether the machine is ready to install. It is read-only and never
+installs anything itself; when something is missing, it names the required
+package or version instead of trying to generate platform-specific commands.
 
 ### Step 1: Clone with submodules
 
@@ -59,12 +60,13 @@ python3 scripts/installation_advice.py
 ```
 
 If prerequisites (PyTorch, matching CUDA Toolkit / nvcc, submodules) are
-missing, the script prints the commands to fix them. Apply the suggested fix
-and rerun the script until it prints an NssMPClib install command.
+missing, the script prints a `FAIL` item with the required version or condition.
+Apply the fix that matches your OS/package manager and rerun the script until
+the diagnosis passes or only reports intentional warnings.
 
 ### Step 3: Install NssMPClib
 
-Run the command the advice script printed. In both common cases it is simply:
+Once the check passes, the standard editable install is:
 
 ```bash
 pip install -e . --no-build-isolation
@@ -86,7 +88,8 @@ advice script flags it explicitly if either is missing; install them with
 
 The `NSSMPC_SKIP_CUTLASS=1 NSSMPC_SKIP_CSPRNG_CUDA=1` variant is only needed in
 edge cases (CUDA torch installed but nvcc missing / no GPU / broken toolchain);
-the advice script prints it explicitly when applicable.
+the advice script reports when those skip flags are already part of the selected
+installation path.
 
 ### Step 4: Generate cryptographic parameters
 
@@ -254,9 +257,9 @@ Detailed tutorials are available in the `tutorials/` directory:
 4. **Install-time CUDA / submodule errors** (e.g. `RuntimeError: The detected
    CUDA version (X.Y) mismatches ...`, or `fatal error: cutlass/...: No such
    file or directory`):
-   Rerun the advice script — it will tell you whether to install a matching
-   CUDA toolkit, reinstall torch, pull submodules, or fall back to the skip-CUDA
-   install:
+   Rerun the advice script. It will tell you whether the missing requirement is
+   a matching CUDA Toolkit / nvcc version, a compatible PyTorch build, missing
+   submodules, or an intentional CPU/skip-CUDA path:
    ```bash
    python3 scripts/installation_advice.py
    ```
